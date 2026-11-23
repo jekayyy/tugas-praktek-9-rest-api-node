@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tugas Praktek 9 - Monitoring Suhu Real-Time</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; background: #f8fafc; color: #0f172a; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    input, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 14px; }
+    button { background: #2563eb; color: #fff; border: none; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    #notifBox { display: none; background: #fef2f2; border: 1px solid #ef4444; color: #991b1b; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-weight: bold; }
+    .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; background: #e2e8f0; }
+  </style>
+</head>
+<body>
+  <h2>Dashboard Suhu Real-Time (Chart.js + WebSocket)</h2>
+  <p>Status WebSocket: <span id="wsStatus" class="badge">Menghubungkan...</span> | Batas Suhu Aktif: <strong id="currentThreshold">-</strong> °C</p>
+
+  <div id="notifBox"></div>
+
+  <div class="card">
+    <h3>Pengaturan & Uji Kirim Data (Header: <code>X-API-Key</code>)</h3>
+    <div class="row" style="margin-bottom: 10px;">
+      <label>API Key:</label>
+      <input id="apiKeyInput" type="text" value="rahasia-iot-123" />
+      <label>Batas Suhu (°C):</label>
+      <input id="thresholdInput" type="number" step="0.1" value="35" style="width: 90px;" />
+      <button onclick="updateThreshold()">Set Threshold (PUT)</button>
+    </div>
+    <div class="row">
+      <label>Suhu Uji (°C):</label>
+      <input id="tempInput" type="number" step="0.1" value="36.5" style="width: 90px;" />
+      <button onclick="sendTestTelemetry()">Kirim Data Suhu (POST)</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <canvas id="tempChart" height="110"></canvas>
+  </div>
+
+  <script>
+    const apiKeyEl = document.getElementById('apiKeyInput');
+    const wsStatusEl = document.getElementById('wsStatus');
+    const thresholdEl = document.getElementById('currentThreshold');
+    const notifBox = document.getElementById('notifBox');
+
+    const ctx = document.getElementById('tempChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Suhu (°C)',
+          data: [],
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37, 99, 235, 0.15)',
+          tension: 0.25,
+          fill: true
+        }]
+      },
+      options: {
+        animation: false,
+        scales: { y: { beginAtZero: false } }
+      }
+    });
+
+    function addPoint(label, temp) {
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(temp);
+      if (chart.data.labels.length > 25) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update();
+    }
+
+    function showAlert(msg) {
+      notifBox.textContent = msg;
+      notifBox.style.display = 'block';
+    }
+
+    async function loadInitial() {
+      const res = await fetch('/api/telemetry?limit=20');
+      const json = await res.json();
+      if (json.success) {
+        thresholdEl.textContent = json.threshold;
+        document.getElementById('thresholdInput').value = json.threshold;
+        json.data.forEach((r) => {
+          const t = new Date(r.created_at).toLocaleTimeString();
+          addPoint(t, r.temperature);
+        });
+      }
+    }
+
+    async function updateThreshold() {
+      const maxTemp = parseFloat(document.getElementById('thresholdInput').value);
+      const res = await fetch('/api/threshold', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKeyEl.value
+        },
+        body: JSON.stringify({ maxTemp })
+      });
+      const data = await res.json();
+      alert(data.message || 'Selesai');
+    }
+
+    async function sendTestTelemetry() {
+      const temperature = parseFloat(document.getElementById('tempInput').value);
+      const res = await fetch('/api/telemetry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKeyEl.value
+        },
+        body: JSON.stringify({ device_id: 'wokwi-esp32', temperature })
+      });
+      const data = await res.json();
+      if (!data.success) alert(data.message);
+    }
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${location.host}`);
+
+    ws.onopen = () => {
+      wsStatusEl.textContent = 'Terhubung (Real-Time)';
+      wsStatusEl.style.background = '#dcfce7';
+    };
+
+    ws.onclose = () => {
+      wsStatusEl.textContent = 'Terputus';
+      wsStatusEl.style.background = '#fee2e2';
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'telemetry') {
+        const timeStr = new Date(msg.payload.created_at).toLocaleTimeString();
+        addPoint(timeStr, msg.payload.temperature);
+      } else if (msg.type === 'alert') {
+        showAlert(msg.payload.message);
+      } else if (msg.type === 'threshold') {
+        thresholdEl.textContent = msg.payload.maxTemp;
+      }
+    };
+
+    loadInitial();
+  </script>
+</body>
+</html>

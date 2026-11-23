@@ -1,0 +1,16 @@
+{
+  "name": "tugas-praktek-9-rest-api-node",
+  "version": "1.0.0",
+  "description": "REST API Node.js dengan threshold suhu, X-API-Key, SQLite, WebSocket, dan Chart.js",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "sqlite3": "^5.1.7",
+    "ws": "^8.18.0"
+  }
+}
